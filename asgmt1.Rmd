@@ -1,0 +1,627 @@
+---
+title: "Data Set Selection and Initial Processing of Dataset GSE225356"
+author: "Li Quan Soh"
+date: "2024-02-06"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+  html_notebook:
+    toc: yes
+    toc_depth: 2
+    theme: cerulean
+  html_document:
+    toc: yes
+    toc_depth: '2'
+    df_print: paged
+subtitle: BCB420 Assignment 1
+bibliography: asgmt1.bib
+---
+
+# 1 Processing Data
+
+#### Include necessary packages
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+if (!require("BiocManager", quietly = TRUE)){
+    install.packages("BiocManager")
+}
+if (!require("GEOquery", quietly = TRUE)){
+    BiocManager::install("GEOquery")
+}
+
+if (!require("clusterProfiler", quietly = TRUE)){
+    BiocManager::install("clusterProfiler")
+}
+if (!require("org.Hs.eg.db", quietly = TRUE)){
+    BiocManager::install("org.Hs.eg.db")
+}
+
+library(GEOquery)
+library(knitr)
+```
+
+## 1.1 Basic Data Exploration
+
+#### Get the Geo description of my dataset
+```{r message=FALSE}
+data_set_geoid <- "GSE225356"
+gse <- getGEO(data_set_geoid ,GSEMatrix=FALSE)
+gse@header$summary
+```
+
+&nbsp;
+&nbsp;
+
+#### Information about the platform
+```{r echo=FALSE, eval=TRUE}
+gpl <- names(GPLList(gse))[1]
+gpl_info <- Meta(getGEO(gpl))
+```
+```{r echo=FALSE, eval=FALSE}
+gpl_info$title
+gpl_info$last_update_date
+gpl_info$organism
+```
+
+Platform Metadata                                 | Info
+------------------------------------------------- | --------------------------------------
+Platform title                                    | `r gpl_info$title`
+Submission data                                   | `r gpl_info$submission_date`
+Last update data                                  | `r gpl_info$last_update_date`
+Organisms                                         | `r gpl_info$organism`
+Number of GEO datasets that use this technology   | `r length(gpl_info$series_id)`
+Number of GEO samples that use this technology    | `r length(gpl_info$sample_id)`
+
+&nbsp;
+&nbsp;
+
+#### Information about the data processing
+```{r}
+gse@gsms[[1]]@header$data_processing
+```
+It is clear that the authors of the associated article gave very brief annotation of the data processing for this dataset. Nevertheless, it is clear enough to understand their overall pipeline for the dataset.
+
+&nbsp;
+&nbsp;
+
+***
+
+&nbsp;
+&nbsp;
+
+## 1.2 Verifying data and collating important annotation
+
+#### Select the expression data file for downstream analysis
+```{r}
+# names of the supplementary files
+suppl_files_names = getGEOSuppFiles(data_set_geoid, fetch_files = FALSE)
+suppl_files_names$fname
+
+# select first supplementary file as our expression data file
+data_filename <- suppl_files_names$fname[1]
+```
+The first supplementary file is selected as file 2 and 3 seems to be the result of the Differential Expressed Gene (DEG) Analysis. File 4 seems to be the raw file.
+
+&nbsp;
+&nbsp;
+
+#### Download expression data file
+```{r message=FALSE, warning=FALSE}
+# set download directory for data file
+download_dir <- file.path(getwd())
+
+suppl_files = getGEOSuppFiles(data_set_geoid,
+                        baseDir = download_dir,
+                        fetch_files = TRUE)
+```
+
+&nbsp;
+&nbsp;
+
+#### Read in and verify data
+```{r}
+# Read in the data
+rnaseq_df <- read.table(
+  file.path(download_dir, data_set_geoid, data_filename),
+  header = TRUE,
+  check.names = TRUE)
+
+# dimension of the rnaseq dataframe
+dim(rnaseq_df)
+
+# how many samples did the the dataset have?
+length(gse@gsms)
+```
+The dataframe has 38557 rows, which corresponds to 38557 genes. In a typical
+RNAseq, there should be approximately 20000s to 30000s genes. Thus, we conclude
+that our data file has sufficient gene coverage. There are 12 columns (one of
+which is the Gene Name). This match the number of samples in the dataset: 11.  
+
+&nbsp;
+&nbsp;
+
+#### Presentation of our selected expression data "rnaseq_df"
+```{r}
+kable(rnaseq_df[1:5,1:4], format = "html")
+```
+
+&nbsp;
+&nbsp;
+
+#### Further investigation of the annotations in our dataset
+```{r}
+colnames(rnaseq_df)[1:11]
+gse@gsms[[1]]@header$characteristics_ch1
+```
+It is evident that the first column is the gene id (after further investigation,
+it appears to be the NCBI gene ID). After combing through the associated article [@pmc_10694946], it appears that:
+
+* Com is an abbreviation for "combination", denoting treatment of MI-503 (menin inhibitor) and PR-957 (selective immunoproteosome inhibitor). 
+* D is an abbreviation for the DMSO control. 
+* MI is an abbreviation for the menin inhibitor treatment.  
+
+Each sample has annotation about the cell line, cell type, treatment type, and time of observation.
+
+&nbsp;
+&nbsp;
+
+#### Collating the important annotations
+```{r}
+# Collect all the crucial sample annotations into one dataframe
+samples_info <- do.call(rbind,
+                        lapply(gse@gsms,
+                               FUN = function(x){
+                                 c(x@header$title,
+                                   x@header$characteristics_ch1)
+                               }
+                              ))
+
+# Clean up sample description
+colnames(samples_info) <- c("Title", "Cell Line", "Cell Type", "Treatment",
+                            "Observation Time")
+samples_info[,'Cell Line'] <- gsub(samples_info[,'Cell Line'],
+                                   pattern = "cell line: ",
+                                   replacement = "")
+samples_info[,'Cell Type'] <- gsub(samples_info[,'Cell Type'],
+                                   pattern = "cell type: ",
+                                   replacement = "")
+samples_info[,'Treatment'] <- gsub(samples_info[,'Treatment'],
+                                   pattern = "treatment: ",
+                                   replacement = "")
+samples_info[,'Observation Time'] <- gsub(samples_info[,'Observation Time'],
+                                   pattern = "time: ",
+                                   replacement = "")
+
+kable(samples_info[1:7,], format = "html")
+```
+
+
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+***
+
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+
+# 2 Data Cleaning and Normalization  
+
+## 2.1 Mapping to HUGO symbols
+```{r}
+#checking if any redundant gene rows
+length(unique(rnaseq_df[,1])) - length(rnaseq_df[,1])
+
+#check to see the percentage of gene rows that have "LOC" (symbols not available at the time of publication)
+length(grep("LOC",rnaseq_df[,1])) / length(rnaseq_df[,1]) * 100
+```
+This suggests that there are no duplicate genes in the RNASeq dataframe. The gene rows are already using HGNC symbols. Upon further inspection, ~29% of the rows have "LOC" prefix (these genes do not have HGNC symbols associated with them at the time of publication). We will map the geneIDs with "LOC" prefix to HGNC symbol with *clusterProfiler* [@entrezIDmapping] to see if there are any updated HGNC symbols for those genes. *org.Hs.eg.db* [@hsapiensMapping] is the most suitable for mapping Entrez ID to HGNC symbols for human gene data.
+
+```{r eval=FALSE}
+# Create a column 'hgnc_symbols' with only gene symbols OR NA
+library(tibble)
+library(org.Hs.eg.db)
+hgnc_symbol <- c()
+
+# mapping LOC entrezID (modified code by [@entrezIDmapping])
+for (gene_name in rnaseq_df[,1]){
+  if (grepl("LOC", gene_name)){
+    geneID <- gsub(gene_name, 
+                   pattern = "^LOC",
+                   replacement = "")
+    symb <- try(suppressMessages(clusterProfiler::bitr(geneID,
+                 fromType = "ENTREZID",
+                 toType = "SYMBOL",
+                 OrgDb = org.Hs.eg.db))[1,2], silent = TRUE)
+    if("try-error" %in% class(symb)){
+      symb <- NA
+    }
+  } else {
+    symb <- gene_name
+  }
+  hgnc_symbol <- c(hgnc_symbol, symb)
+}
+```
+
+#### Create a copy of the RNASeq dataframe with updated HGNC symbols
+```{r eval=FALSE}
+#bind the hgnc_symbol object to rnaseq_df_HGNC
+rnaseq_df_HGNC <- data.frame(rnaseq_df)
+rnaseq_df_HGNC["hgnc_symbol"] <- hgnc_symbol 
+rnaseq_df_HGNC <- rnaseq_df_HGNC[,c(1,13,2:12)]
+
+#save the dataframe
+save(rnaseq_df_HGNC,file="rnaseq_df_HGNC.Rda")
+```
+
+```{r}
+# visualize the dataframe
+load("rnaseq_df_HGNC.Rda")
+kable(rnaseq_df_HGNC[1:5,1:4], format = "html")
+```
+#### Statistics of the RNASeq dataframe with updated HGNC symbols
+```{r}
+#how many gene rows have no available symbols
+(symb_NA <- sum(is.na(rnaseq_df_HGNC["hgnc_symbol"])))
+
+# how many gene rows have "LOC" in their symbols (appear in GeneCards, but not HGNC)
+(symb_LOC <- sum(grepl("LOC", unlist(rnaseq_df_HGNC["hgnc_symbol"]))))
+
+# percentage of genes that have no proper hgnc symbols and "LOC" prefixes
+(symb_NA + symb_LOC)/nrow(rnaseq_df_HGNC)*100
+
+# percentage of genes that have no available symbols
+(symb_NA)/nrow(rnaseq_df_HGNC)*100
+```
+After mapping and verification, it appears only 1690 genes have no available gene symbols, and 8689 gene have "LOC" prefixes. Initially, we had 29.3% of the genes with no gene symbols. After mapping, only 4.4% of the genes have no available symbols, and a combined 26.9% of the genes with no available symbols or symbols having "LOC" prefixes.
+
+&nbsp;
+&nbsp;
+
+***
+
+&nbsp;
+&nbsp;
+
+## 2.2 Filtering & Normalization
+
+#### Filtering Data: Removing Low Counts
+```{r}
+library(limma)
+library(edgeR)
+
+# figuring out the groups of the comparison I'm trying to make
+samples_info_dt <- data.table::data.table(samples_info)
+samples_info_dt[, .(count = .N), by = samples_info_dt$Treatment]
+```
+Treatment type is the only comparison that can be made with this dataset. The rest of the conditions are uniform. I then proceed to filter out genes that are not expressed in minimum 3 of the samples. I chose this minimum because one of the group of interest (MI-503 + PR-957) has only 3 samples, the lowest number of samples in the Treatment Type. 
+
+```{r}
+# minimal number of samples
+min_samples <- 3
+data_matrix <- as.matrix(rnaseq_df_HGNC[,-c(1,2)])
+rownames(data_matrix) <- unlist(rnaseq_df_HGNC["Gene"])
+
+# removing low counts
+filtered = rowSums(cpm(data_matrix) > 1) > min_samples
+filtered_data_matrix = data_matrix[filtered,]
+
+# verifying the filtered_data_matrix have appropriate dimensions and row names to associate the row to the filtered genes
+dim(filtered_data_matrix)
+head(rownames(filtered_data_matrix))
+```
+After filtering out genes with low read counts, the filtered dataset has a remaining of 12666 genes. This is `12666/38557*100`% of the pre-filtered dataset.
+
+&nbsp;
+&nbsp;
+
+#### Comparing the data pre- & post- filter
+```{r}
+par(mfrow = c(1, 2))
+
+#Pre-filter
+data2plot <- log2(data_matrix)
+counts_density <- apply(log2(data_matrix), 2, density)
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(counts_density)) {
+xlim <- range(c(xlim, counts_density[[i]]$x));
+ylim <- range(c(ylim, counts_density[[i]]$y))
+}
+cols <- rainbow(length(counts_density))
+ltys <- rep(1, length(counts_density))
+#plot the first density plot to initialize the plot
+plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+ylab="Smoothing density of log2-CPM",
+main="Pre Filter", sub="Density Plot", cex.lab = 0.85)
+#plot each line
+for (i in 1:length(counts_density))
+lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+#create legend
+legend("topright", colnames(data2plot),
+col=cols, lty=ltys, cex=0.75,
+border ="blue", text.col = "green4",
+merge = TRUE, bg = "gray90")
+
+#Post-filter 
+filtered_data2plot <- log2(filtered_data_matrix)
+filtered_counts_density <- apply(log2(filtered_data_matrix), 2, density)
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(filtered_counts_density)) {
+xlim <- range(c(xlim, filtered_counts_density[[i]]$x));
+ylim <- range(c(ylim, filtered_counts_density[[i]]$y))
+}
+cols <- rainbow(length(filtered_counts_density))
+ltys <- rep(1, length(filtered_counts_density))
+#plot the first density plot to initialize the plot
+plot(filtered_counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+ylab="Smoothing density of log2-CPM", 
+main="Post Filter", sub="Density Plot", cex.lab = 0.85)
+#plot each line
+for (i in 1:length(filtered_counts_density))
+lines(filtered_counts_density[[i]], col=cols[i], lty=ltys[i])
+#create legend
+legend("topright", colnames(filtered_data2plot),
+col=cols, lty=ltys, cex=0.75,
+border ="blue", text.col = "green4",
+merge = TRUE, bg = "gray90")
+```
+  
+From the above graphs, it is evident that there were many genes with low-count that contribute to the noise of my data. Removing them makes the samples to be follow similar curve to each other. However, only `r 12666/38557*100`% of the genes remained after removing the noises, as previously noted.
+
+&nbsp;
+&nbsp;
+
+#### Applying TMM to our dataset
+```{r}
+# Create an edgeR container for RNASeq count data and calculate the normalization factors.
+edgeR_container = DGEList(counts=filtered_data_matrix, group=samples_info_dt$Treatment)
+edgeR_container = calcNormFactors(edgeR_container)
+
+# Visualize pre- & post- normalization
+# get the normalized count
+normalized_counts <- cpm(edgeR_container)
+
+par(mfrow = c(1, 2))
+# pre-normalized
+filtered_data2plot <- log2(filtered_data_matrix)
+filtered_counts_density <- apply(log2(filtered_data_matrix), 2, density)
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(filtered_counts_density)) {
+xlim <- range(c(xlim, filtered_counts_density[[i]]$x));
+ylim <- range(c(ylim, filtered_counts_density[[i]]$y))
+}
+cols <- rainbow(length(filtered_counts_density))
+ltys <- rep(1, length(filtered_counts_density))
+#plot the first density plot to initialize the plot
+plot(filtered_counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+ylab="Smoothing density of log2-CPM", 
+main="Pre-Normalization", sub="Density Plot", cex.lab = 0.85)
+#plot each line
+for (i in 1:length(filtered_counts_density))
+lines(filtered_counts_density[[i]], col=cols[i], lty=ltys[i])
+#create legend
+legend("topright", colnames(filtered_data2plot),
+col=cols, lty=ltys, cex=0.75,
+border ="blue", text.col = "green4",
+merge = TRUE, bg = "gray90")
+
+# post-normalized
+normalized_data2plot <- log2(normalized_counts)
+normalized_counts_density <- apply(log2(normalized_counts), 2, density)
+#calculate the limits across all the samples
+xlim <- 0; ylim <- 0
+for (i in 1:length(normalized_counts_density)) {
+xlim <- range(c(xlim, normalized_counts_density[[i]]$x));
+ylim <- range(c(ylim, normalized_counts_density[[i]]$y))
+}
+cols <- rainbow(length(normalized_counts_density))
+ltys <- rep(1, length(normalized_counts_density))
+#plot the first density plot to initialize the plot
+plot(normalized_counts_density[[1]], xlim=xlim, ylim=ylim, type="n",
+ylab="Smoothing density of log2-CPM", 
+main="Post Normalization", sub="Density Plot", cex.lab = 0.85)
+#plot each line
+for (i in 1:length(normalized_counts_density))
+lines(normalized_counts_density[[i]], col=cols[i], lty=ltys[i])
+#create legend
+legend("topright", colnames(normalized_data2plot),
+col=cols, lty=ltys, cex=0.75,
+border ="blue", text.col = "green4",
+merge = TRUE, bg = "gray90")
+```
+  
+It is evident that the sampling distributions have become even more similar after normalization, while retaining the same number of genes (N = 12666).
+
+&nbsp;
+&nbsp;
+
+#### Visualizing the distribution of the data via Boxplot
+```{r}
+#Boxplot comparing original vs filtered & normalized dataset
+par(mfrow = c(1, 3))
+
+# Original Dataset
+boxplot(data2plot, xlab = "Samples", ylab = "log2 CPM",
+las = 2, cex = 0.5, cex.lab = 0.5,
+cex.axis = 0.5, main = "Original Counts")
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)),
+col = "red", lwd = 0.6, lty = "dashed")
+
+# Filtered Dataset
+boxplot(filtered_data2plot, xlab = "Samples", ylab = "log2 CPM",
+las = 2, cex = 0.5, cex.lab = 0.5,
+cex.axis = 0.5, main = "Filtered Counts")
+#draw the median on each box plot
+abline(h = median(apply(filtered_data2plot, 2, median)),
+col = "red", lwd = 0.6, lty = "dashed")
+
+# Filtered and Normalized Dataset
+boxplot(normalized_data2plot, xlab = "Samples", ylab = "log2 CPM",
+las = 2, cex = 0.5, cex.lab = 0.5,
+cex.axis = 0.5, main = "Normalized Counts")
+#draw the median on each box plot
+abline(h = median(apply(normalized_data2plot, 2, median)),
+col = "red", lwd = 0.6, lty = "dashed")
+```
+  
+The original datasets have many genes that have 0 read counts, skewing the data towards 0. After filtering, the dataset's mean has shifted to log2 CPM = 10. However, the samples not very uniformed. After normalization, the dataset's mean has shifted to log2 CPM = 5 and the samples are fairly uniformed
+
+&nbsp;
+&nbsp;
+
+#### Visualizing the distirbution of the data via MDS plot
+```{r}
+# MDS plot to inspect sample separation
+limma::plotMDS(edgeR_container, labels=NULL,pch=1,
+col = c("red","orange","purple","brown")[factor(samples_info_dt$Treatment)])
+legend("topright",
+legend=levels(factor(samples_info_dt$Treatment)),
+pch=c(1), col=c("red","orange","purple","brown"),title="Class",
+bty = 'n', cex = 0.75)
+```
+  
+The MDS plot reduces the dimensionality of the data to a 2D plane, allowing us to see the clustering and relationship between treatment groups (DMSO control vs MI-503 vs MI-503 + PR-957). It is evident that there is a strong clustering of different treatment type, which suggests that we may get stronger signals for downstream DEG analysis.
+
+&nbsp;
+&nbsp;
+
+#### Dispersion
+```{r}
+# Estimating dispersion in the data
+model_design <- model.matrix(~samples_info_dt$Treatment)
+edgeR_container <- estimateDisp( edgeR_container, model_design)
+
+# BCV plot to visualize dispersion
+plotBCV(edgeR_container,col.tagwise = "black",col.common = "red", 
+        main = "BCV Plot of the Normalized Dataset")
+```
+  
+Common dispersion is the mean dispersion across all genes. Trend dispersion is mean dispersion across all genes with similar CPM. This plot suggests that the common dispersion and trend dispersion is relatively similar to each other, hovering around the BCV value of approximately 0.15. A BCV of .15 for human samples suggest that the variation in my data isn't too big. Perhaps there will not be many differentially expressed genes in downstream DEG analysis.
+
+&nbsp;
+&nbsp;
+
+#### Visualizing the mean-variance relationship
+```{r}
+# For proper formatting
+par(mar = c(3, 3, 3, 8))
+
+# Plotting the mean-variance relationship
+plotMeanVar(edgeR_container, show.raw.vars = TRUE, show.tagwise.vars=TRUE,
+            show.ave.raw.vars = TRUE,
+            NBline = TRUE,
+            show.binned.common.disp.vars = TRUE,
+            main = "Mean-variance Plot")
+```
+  
+It is evident that the data is following the negative binomial distribution (blue line), thus satisfying the **edgeR's** algorithm assumption. Data corrected with tagwise dispersion (light blue circles) exhibits less variation than the original data (grey circles) but exhibits more variation than data corrected with common dispersion. 
+
+&nbsp;
+&nbsp;
+
+#### Combining replicates for each treatment group
+```{r}
+# define grouping
+group <- c("MI-503 + PR-957", "DMSO control", "MI-503")
+rep_num <- c(3, 4, 4)
+grouped_df <- c()
+
+# combine replicates for each group
+counter <- 1
+for (i in seq_along(rep_num)) {
+  grouped_df <- cbind(grouped_df, rowMeans(normalized_data2plot[, counter:(counter+rep_num[i]-1)]))
+  counter <- counter + rep_num[i]
+}
+colnames(grouped_df) <- group
+
+# visualize
+kable(grouped_df[1:5,1:3], format = "html")
+```
+
+
+#### Exporting the filtered & normalized dataset
+```{r}
+# Writing out the filtered & normalized dataset
+write.table(normalized_counts,
+            file.path(getwd(),data_set_geoid, 
+                      paste(data_set_geoid,
+                            "filtered_normalized_counts.txt",
+                            sep="_")),
+            quote = FALSE, sep="\t", row.names = TRUE)
+```
+
+
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+***
+
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+
+# 3 Interpretations & Conclusion
+
+#### Key Interpretations
+1. Why is the dataset of interest to you?
+  + I want to detect genes of interest that are associated with the oncogenic transcriptional networks in AML. Further downstream differential gene analysis may elucidate key genes that can be pharmacologically targeted for treatment of AML. In particular, I want to verify the genes (eg PSMB8, BASP1) mentioned in the associated paper [@pmc_10694946] indeed good targets for AML treatments.  
+  
+2. What are the control and test conditions of the dataset?
+  + Link: [Further investigation of the annotations in our dataset]  
+
+3. How many samples in each of the conditions of your dataset?
+  + Link: [Filtering Data: Removing Low Count]  
+
+4. Were there expression values that were not unique for specific genes? How did you handle these?
+  + Link: [2.1 Mapping to HUGO symbols]  
+
+5. Were there expression values that could not be mapped to current HUGO symbols?
+  + Link: [2.1 Mapping to HUGO symbols]  
+
+6. Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed?
+  + Link: [Filtering Data: Removing Low Counts]  
+
+7. How did you handle replicates?
+  + Link: [Combining replicates for each treatment group]
+
+8. What is the final coverage of your dataset?
+  + Initially, the coverage is 38557 genes. [Read in and verify data]
+  + After filtering and normalization, the final coverage is 12666 genes. [Applying TMM to our dataset]
+
+&nbsp;
+&nbsp;
+
+#### Conclusion
+
+In this project, I have meticulously processed and analyzed the gene expression dataset **GSE225356**. I began by exploring the dataset's metadata, examining the platform information and data processing steps.  
+
+My analysis involved several critical steps, including filtering out genes with low counts, mapping gene IDs to HUGO symbols, and normalizing the data to account for technical biases. I meticulously inspected the data before and after filtering and normalization, ensuring that the normalization procedures effectively reduced variation and improved data quality.  
+
+Furthermore, I conducted exploratory data analysis, visualizing the distribution of gene expression values and examining sample relationships through MDS plots. I also estimated common and tagwise dispersion in the data, and plotted the mean-variance relationship to ensure that the data conformed to edgeR protocol.  
+
+Through these initial processing, I have prepared a filtered and normalized dataset ready for downstream analysis.  
+
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+***
+
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
