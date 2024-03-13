@@ -9,4 +9,5 @@ You can access my wiki [here](https://github.com/bcb420-2024/Li_Soh/wiki).
 
 # Assignments
 You can access A1 [here](https://github.com/bcb420-2024/Li_Soh/blob/main/asgmt1.html).
+
 You can access A2 [here](https://github.com/bcb420-2024/Li_Soh/blob/main/asgmt2.html).
