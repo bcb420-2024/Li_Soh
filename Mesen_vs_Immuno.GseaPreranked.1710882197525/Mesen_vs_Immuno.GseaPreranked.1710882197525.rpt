@@ -1,0 +1,23 @@
+producer_class	xtools.gsea.GseaPreranked
+producer_timestamp	1710882197525
+param	rpt_label	Mesen_vs_Immuno
+param	rnd_seed	timestamp
+param	set_min	15
+param	zip_report	false
+param	create_svgs	false
+param	scoring_scheme	weighted
+param	rnk	D:\UofTY4S2\BCB420\GSEA_hmwrk\MesenvsImmuno_RNASeq_ranks.rnk
+param	norm	meandiv
+param	out	D:\UofTY4S2\BCB420\GSEA_hmwrk
+param	mode	Abs_max_of_probes
+param	include_only_symbols	true
+param	help	false
+param	set_max	200
+param	gmx	D:\UofTY4S2\BCB420\GSEA_hmwrk\Human_GOBP_AllPathways_no_GO_iea_March_01_2021_symbol.gmt
+param	make_sets	true
+param	plot_top_x	20
+param	gui	false
+param	nperm	1000
+param	collapse	No_Collapse
+
+file	D:\UofTY4S2\BCB420\GSEA_hmwrk\Mesen_vs_Immuno.GseaPreranked.1710882197525\index.html
